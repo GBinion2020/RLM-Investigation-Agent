@@ -2,34 +2,45 @@
 
 ```mermaid
 flowchart TD
-    A["Raw Elastic Alert"] --> B["Normalize Alert"]
-    B --> C["normalized_alert.json"]
+    A["SIEM (Elastic)"] --> B["query_0.py / query_json.py"]
+    B --> C["baseline_context.csv / log_chunks.json"]
+    C --> D["LogCorpus + Inverted Index"]
 
-    C --> D["run_investigation.py"]
-    D --> E["Load LogCorpus"]
-    D --> F["REPL Setup Code"]
+    E["Raw Elastic Alert"] --> F["Normalize Alert"]
+    F --> G["normalized_alert.json"]
+    F --> H["alert_details.json"]
 
-    F --> G["derive_keywords (5)"]
-    G --> H["discover_chunks"]
-    H --> I["get_chunk_metadata"]
+    G --> I["run_investigation.py"]
+    H --> I
+    D --> I
 
-    I --> J["run_worker_stage"]
-    J --> K{Worker Output OK?}
-    K -- "Yes" --> L["Save filtered logs"]
-    K -- "No" --> M["Fallback filter"]
-    M --> L
-
-    L --> N["run_ioc_stage"]
-    N --> O{Pivot keywords?}
-    O -- "Yes (max 1)" --> H
-    O -- "No" --> P["format_report"]
-
-    P --> Q["evidence_discovery_package.md"]
-    L --> R["relevant_logs.jsonl"]
-    D --> S["audit_log.jsonl"]
+    I --> J["REPL Setup Code"]
+    J --> K["Helpers + Corpus in REPL"]
+    K --> L["Root RLM Orchestration"]
 
     subgraph LMHandler
-      J --> J1["Worker LLM"]
-      N --> N1["IOC LLM"]
+      L --> M["Worker LLM"]
+      L --> N["IOC LLM"]
     end
+
+    L --> O["evidence_discovery_package.md"]
+    L --> P["relevant_logs.jsonl"]
+    L --> Q["audit_log.jsonl"]
+```
+
+```mermaid
+flowchart TD
+    A["derive_keywords (5)"] --> B["discover_chunks"]
+    B --> C["get_chunk_metadata"]
+    C --> D["run_worker_stage"]
+    D --> E{Worker Output OK?}
+    E -- "Yes" --> F["Save filtered logs"]
+    E -- "No" --> G["Fallback filter"]
+    G --> F
+
+    F --> H["run_ioc_stage"]
+    H --> I{Pivot keywords?}
+    I -- "Yes (max 1)" --> B
+    I -- "No" --> J["format_report"]
+    J --> K["evidence_discovery_package.md"]
 ```
