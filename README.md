@@ -9,6 +9,24 @@ Security triage requires fast, audit-friendly evidence gathering. This project a
 - Delegating log filtering and IOC extraction to sub-LLMs with strict instructions
 - Emitting a deterministic, templated report plus a relevant-log bundle
 
+## Simple Workflow (Conceptual)
+```mermaid
+flowchart TD
+    A["Alert Ingestion"] --> B["Normalize Alert"]
+    B --> C["Gets Logs Function"]
+    C -.-> D["Elastic SIEM"]
+
+    C --> E["REPL Environment"]
+    E --> F["Logs"]
+
+    B --> G["Enriched Context"]
+    G --> H["Root RLM (Depth = 0)"]
+    H --> I["Sub LLM (Depth = 1)"]
+    I --> F
+    I --> J["Sub LLM (Depth = 2)"]
+    J --> F
+```
+
 ## Pipeline Workflow (Detailed Data + Control Flow)
 ```mermaid
 flowchart TD
