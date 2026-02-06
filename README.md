@@ -10,6 +10,8 @@ Security triage requires fast, audit-friendly evidence gathering. This project a
 - Emitting a deterministic, templated report plus a relevant-log bundle
 
 ## Simple Workflow (Conceptual)
+![Simple Workflow Diagram](Docs/rlmdg.png)
+
 ```mermaid
 flowchart TD
     A["Alert Ingestion"] --> B["Normalize Alert"]
