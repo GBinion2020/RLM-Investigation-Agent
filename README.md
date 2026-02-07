@@ -66,24 +66,6 @@ flowchart TD
     N --> S["get_siem_context/audit_log.jsonl"]
 ```
 
-## Investigation Workflow (Helper Functions + Control Loop)
-```mermaid
-flowchart TD
-    A["derive_keywords()"] --> B["discover_chunks()"]
-    B --> C["get_chunk_metadata()"]
-    C --> D["run_worker_stage()"]
-    D --> E{Worker Output OK?}
-    E -- "Yes" --> F["save_relevant_logs()"]
-    E -- "No" --> G["_fallback_filter_logs()"]
-    G --> F
-
-    F --> H["run_ioc_stage()"]
-    H --> I{Pivot keywords?}
-    I -- "Yes (max 1)" --> B
-    I -- "No" --> J["format_report()"]
-    J --> K["evidence_discovery_package.md"]
-```
-
 ## Process Notes (Mapped to Function Names)
 - Alert ingestion uses `Elastic.Alert()` to pull the latest alert and `normalize()` to write `normalized_alert.json` plus `alert_details_normalized()` for `alert_details.json`.
 - SIEM log pull is handled by `query_0()` or `query_json()` which write `baseline_context.csv` and/or `log_chunks.json`.
