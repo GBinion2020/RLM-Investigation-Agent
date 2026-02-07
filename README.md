@@ -1,6 +1,6 @@
 ﻿# RLM Investigation Agent
 
-RLM Investigation Agent is a security-evidence harvesting pipeline built on Recursive Language Models (RLM). It ingests an alert, normalizes it, searches a local log corpus for related evidence using an RLM worflow (Sub LM calls), and produces a structured report with IOCs and log references. The system is designed for evidence collection only and does not label alerts as benign or malicious.
+RLM Investigation Agent is a security-evidence harvesting pipeline built on Recursive Language Models (RLM). It ingests an alert, normalizes it, searches a local log corpus for related evidence using an RLM worflow (Sub LLM calls), and produces a structured report with IOCs and log references. The system is designed for evidence collection only and does not label alerts as benign or malicious.
 
 ## Why This Exists
 Security triage requires fast, audit-friendly evidence gathering. This project automates:
