@@ -1,20 +1,28 @@
-﻿# RLM Investigation Agent
+# RLM Investigation Agent
 
-RLM Investigation Agent is a security-evidence harvesting pipeline built on Recursive Language Models (RLM). It ingests an alert, normalizes it, searches a local log corpus for related evidence using an RLM workflow (sub-LLM calls), and produces a structured report with IOCs and log references. The system is designed for evidence collection only and does not label alerts as benign or malicious.
+**Security evidence harvesting with Recursive Language Models (RLM).**  
+This pipeline ingests a SIEM alert, normalizes it, searches a local log corpus, and delegates focused log analysis to sub?LLMs. The result is a **structured evidence report** with IOCs and log references ? **no benign/malicious classification**.
 
 ## Acknowledgements
-This project is inspired by the Recursive Language Models (RLM) work by Alex Zhang and the MIT team. Their research and open materials made this implementation possible and shaped the design choices throughout this repo. citeturn0search0
+This project is inspired by the Recursive Language Models (RLM) work by **Alex Zhang and the MIT team**. Their research and open materials made this implementation possible and shaped the design choices throughout this repo.
 
 ## Why This Exists
-This project is a practical exploration of **Recursive Language Models (RLMs)** as a way to achieve an *effectively infinite context window* without stuffing all logs into a single model call. RLMs are an inference strategy where a root model operates inside a REPL environment that holds large context variables and can recursively call sub‑LLMs to inspect subsets of that context. This avoids “context rot” by letting the model decide how to partition and query the data, while keeping the root model’s input small and focused. citeturn0search0
+This project explores **Recursive Language Models (RLMs)** as a way to achieve an *effectively infinite context window* without stuffing all logs into a single model call. A root model operates inside a REPL holding large context variables and can recursively call sub?LLMs to inspect bounded slices of that context. This keeps the root prompt small and focused while still accessing large datasets.
 
-In this SIEM setting, that means the root RLM never needs the full log corpus in its prompt. It can derive keywords, find chunk IDs, and delegate focused log filtering/IOC extraction to sub‑LLMs operating over bounded slices of the data. citeturn0search0
+In this SIEM setting, the root RLM never sees the full log corpus in its prompt. It derives keywords, finds chunk IDs, and delegates filtering/IOC extraction to sub?LLMs operating over scoped data.
 
-In practice, this project automates:
-- Normalizing alert context into a consistent schema
-- Locating relevant log chunks without exposing raw logs to the root model
-- Delegating log filtering and IOC extraction to sub‑LLMs with strict instructions
-- Emitting a deterministic, templated report plus a relevant‑log bundle
+## At A Glance
+| Category | What Happens |
+|---|---|
+| **Inputs** | Elastic alert + Elastic logs (`logs-*`) |
+| **Core Actions** | Normalize alert ? build log corpus ? derive keywords ? discover chunk IDs ? worker filtering ? IOC extraction |
+| **Outputs** | `evidence_discovery_package.md`, `relevant_logs.jsonl`, `audit_log.jsonl` |
+| **Guarantees** | No classification, capped pivots, root never sees raw logs |
+
+## Example Output (Sanitized)
+The pipeline writes **`get_siem_context/evidence_discovery_package.md`** (ignored by default to avoid data leakage).  
+Here?s a **sanitized example** you can share publicly:
+- `docs/example_evidence_discovery_package.md`
 
 ## Simple Workflow (Conceptual)
 ![Simple Workflow Diagram](docs/rlm22.png)
@@ -46,7 +54,7 @@ flowchart TD
         M --> N["Root RLM orchestration"]
     end
 
-    subgraph LMHandler["LM Handler (Sub-LLMs)"]
+    subgraph LMHandler["LM Handler (Sub?LLMs)"]
         N --> O["run_worker_stage() -> llm_query()"]
         N --> P["run_ioc_stage() -> llm_query()"]
     end
@@ -61,8 +69,8 @@ flowchart TD
 - SIEM log pull is handled by `query_0()` or `query_json()` which write `baseline_context.csv` and/or `log_chunks.json`.
 - Corpus load is performed by `LogCorpus()` which builds an inverted index for keyword and regex search.
 - REPL injection is done by `run_investigation()` which provides helper functions inside the REPL scope (the `setup_code` block).
-- Root orchestration uses `derive_keywords()`, `discover_chunks()`, `get_chunk_metadata()` before delegating to sub-LLMs.
-- Worker stage calls `run_worker_stage()` which asks a sub-LLM to write filtering code, executes it, and falls back to `_fallback_filter_logs()` if needed.
+- Root orchestration uses `derive_keywords()`, `discover_chunks()`, `get_chunk_metadata()` before delegating to sub?LLMs.
+- Worker stage calls `run_worker_stage()` which asks a sub?LLM to write filtering code, executes it, and falls back to `_fallback_filter_logs()` if needed.
 - IOC stage calls `run_ioc_stage()` to extract indicators and pivot keywords from filtered logs.
 - Reporting is performed by `format_report()` to produce `evidence_discovery_package.md` plus `relevant_logs.jsonl` and `audit_log.jsonl`.
 
@@ -75,7 +83,7 @@ flowchart TD
 - The normalized alert includes `message`, file path, host, user, and event code fields so command text and script blocks are available for keyword derivation.
 
 **2) Log Ingestion from SIEM**
-- `get_siem_context/query_0.py` (or `query_json.py`) pulls logs from Elastic and normalizes them into a high-fidelity schema.
+- `get_siem_context/query_0.py` (or `query_json.py`) pulls logs from Elastic and normalizes them into a high?fidelity schema.
 - Output is stored as `baseline_context.csv` and/or `log_chunks.json`.
 - These files are considered sensitive and are ignored by default in `.gitignore`.
 
@@ -93,7 +101,7 @@ flowchart TD
   - `run_worker_stage`
   - `run_ioc_stage`
   - `format_report`
-- The worker LLM writes log-filtering code, which is executed in a sandboxed scope.
+- The worker LLM writes log?filtering code, which is executed in a sandboxed scope.
 - The IOC LLM extracts indicators with `chunk_id:log_index` references.
 
 **5) Report and Evidence Output**
@@ -159,9 +167,9 @@ These are ignored by default in `.gitignore` because they can contain sensitive 
 ## Docs
 The following documents contain deeper technical details and internal prompt text. They are intended for maintainers and auditors, not end users.
 
-- [`Docs/engineering_report.md`](Docs/engineering_report.md) — research-grade architecture and implementation report.
-- [`Docs/prompts.md`](Docs/prompts.md) — full prompt text used by the RLM pipeline (sensitive by nature; review before sharing).
-- [`Docs/diagram.md`](Docs/diagram.md) — detailed Mermaid diagrams used in this README.
+- `docs/engineering_report.md` ? research-grade architecture and implementation report.
+- `docs/prompts.md` ? full prompt text used by the RLM pipeline (sensitive by nature; review before sharing).
+- `docs/diagram.md` ? detailed Mermaid diagrams used in this README.
 
 ## Troubleshooting
 Common issues:
