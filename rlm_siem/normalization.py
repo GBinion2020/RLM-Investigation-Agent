@@ -1,5 +1,6 @@
 
 import json
+import re
 
 class LogNormalizer:
     """
@@ -70,22 +71,52 @@ class LogNormalizer:
         Extract searchable keywords from a NORMALIZED log.
         Returns a list of lowercase tokens for the inverted index.
         """
-        keywords = set()
-        
+        keywords: set[str] = set()
+
+        def add_value(value: str) -> None:
+            if not value:
+                return
+            text = str(value).strip()
+            if not text:
+                return
+            if len(text) <= 160:
+                keywords.add(text.lower())
+            tokens = re.findall(r"[A-Za-z0-9_:\\/.\\-]{2,}", text)
+            for tok in tokens:
+                if 2 < len(tok) < 80:
+                    keywords.add(tok.lower())
+
         # Add exact field values
-        for field in [LogNormalizer.USER, LogNormalizer.HOST, LogNormalizer.EVENT_CODE, LogNormalizer.PROCESS_NAME]:
-            val = log.get(field, "").lower()
-            if val and val != "unknown" and val != "nan":
-                keywords.add(val)
-                
-        # Tokenize command line / message (simple split)
-        text_fields = [log.get(LogNormalizer.COMMAND_LINE, ""), log.get(LogNormalizer.MESSAGE, "")]
+        for field in [
+            LogNormalizer.USER,
+            LogNormalizer.HOST,
+            LogNormalizer.EVENT_CODE,
+            LogNormalizer.PROCESS_NAME,
+        ]:
+            val = log.get(field, "")
+            if val and str(val).lower() not in {"unknown", "nan"}:
+                add_value(val)
+
+        # Include file path parts
+        file_path = log.get(LogNormalizer.FILE_PATH, "")
+        if file_path:
+            add_value(file_path)
+            parts = re.split(r"[\\\\/]+", file_path)
+            parts = [p for p in parts if p]
+            if parts:
+                add_value(parts[-1])
+                if len(parts) >= 2:
+                    add_value("\\\\".join(parts[-2:]))
+                if len(parts) >= 3:
+                    add_value("\\\\".join(parts[-3:]))
+
+        # Tokenize command line / message / script block
+        text_fields = [
+            log.get(LogNormalizer.COMMAND_LINE, ""),
+            log.get(LogNormalizer.MESSAGE, ""),
+            log.get(LogNormalizer.SCRIPT_BLOCK, ""),
+        ]
         for text in text_fields:
-            if not text: continue
-            # specialized tokens for paths, etc
-            tokens = str(text).replace("\\", " ").replace("/", " ").replace('"', " ").split()
-            for t in tokens:
-                if len(t) > 3 and len(t) < 50: # Filter noise
-                    keywords.add(t.lower())
-                    
+            add_value(text)
+
         return list(keywords)

@@ -65,6 +65,104 @@ def _audit_log(output_dir: str, event: str, data: dict | None = None) -> None:
         pass
 
 
+def _load_json_or_raise(path: str, label: str) -> dict:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"{label} not found: {path}")
+    if os.path.getsize(path) == 0:
+        raise ValueError(f"{label} is empty: {path}")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} is not valid JSON: {path}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{label} must be a JSON object: {path}")
+    if not data:
+        raise ValueError(f"{label} is an empty JSON object: {path}")
+    return data
+
+
+def _log_corpus_ready(path: str) -> bool:
+    if not os.path.exists(path):
+        return False
+    if os.path.getsize(path) == 0:
+        return False
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    return isinstance(data, list) and len(data) > 0
+
+
+def _ensure_log_corpus(logs_path: str, output_dir: str) -> None:
+    if _log_corpus_ready(logs_path):
+        return
+
+    if os.getenv("RLM_AUTO_BUILD_CORPUS", "1") != "1":
+        raise ValueError(
+            f"log corpus missing or empty: {logs_path}. "
+            "Run get_siem_context/query_0.py and chunk_logs.py to generate it."
+        )
+
+    print("  - Log corpus missing/empty: pulling logs from Elastic...")
+    _audit_log(output_dir, "corpus_build_start", {"logs_path": logs_path})
+
+    from get_siem_context.query_0 import query_0
+    from get_siem_context.chunk_logs import chunk_logs_by_time
+
+    baseline_path = os.path.join(output_dir, "baseline_context.csv")
+    max_logs = int(os.getenv("RLM_BASELINE_MAX_LOGS", "10000"))
+    chunk_minutes = int(os.getenv("RLM_CHUNK_MINUTES", "10"))
+    index_pattern = os.getenv("ELASTIC_LOG_INDEX", "logs-*")
+
+    query_0(max_logs=max_logs, output_path=baseline_path, index_pattern=index_pattern)
+
+    if not os.path.exists(baseline_path) or os.path.getsize(baseline_path) == 0:
+        raise ValueError("Baseline log pull failed or returned empty baseline_context.csv.")
+
+    print("  - Chunking baseline logs...")
+    chunks, index = chunk_logs_by_time(baseline_path, chunk_minutes=chunk_minutes)
+
+    index_path = logs_path.replace("log_chunks.json", "inverted_index.json")
+    if index_path == logs_path:
+        index_path = os.path.join(output_dir, "inverted_index.json")
+
+    if not chunks:
+        raise ValueError(
+            "Elastic log pull returned 0 logs. "
+            "Check ELASTIC_LOG_INDEX, host filters, and time window."
+        )
+
+    with open(logs_path, "w", encoding="utf-8") as f:
+        json.dump(chunks, f, indent=2)
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump(index, f, indent=2)
+
+    _audit_log(
+        output_dir,
+        "corpus_build_complete",
+        {"baseline_path": baseline_path, "chunks": len(chunks), "index_path": index_path},
+    )
+
+
+def _purge_run_artifacts(logs_path: str, output_dir: str) -> None:
+    paths = [
+        logs_path,
+        logs_path.replace("log_chunks.json", "inverted_index.json"),
+        os.path.join(output_dir, "baseline_context.csv"),
+        os.path.join(output_dir, "relevant_logs.jsonl"),
+        os.path.join(output_dir, "evidence.jsonl"),
+        os.path.join(output_dir, "suggested_queries.jsonl"),
+    ]
+    for path in paths:
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+
+
 def run_investigation(
     alert_path: str = "./Intake_Alert/normalized_alert.json",
     alert_details_path: str = "./Intake_Alert/alert_details.json",
@@ -98,18 +196,32 @@ def run_investigation(
     
     # 1. Load Alert Metadata
     print("\n[1/5] Loading alert metadata...")
-    if not os.path.exists(alert_path) or not os.path.exists(alert_details_path):
-        print("  - Normalized alert files missing. Running normalization...")
+
+    def _load_alert_files() -> tuple[dict, dict]:
+        alert_metadata = _load_json_or_raise(alert_path, "normalized alert")
+        alert_details = _load_json_or_raise(alert_details_path, "alert details")
+        if os.getenv("RLM_ALLOW_PLACEHOLDER_ALERT", "0") != "1":
+            serialized = json.dumps({"alert_metadata": alert_metadata, "alert_details": alert_details})
+            if "PLACEHOLDER_HOST" in serialized or "PLACEHOLDER_RULE" in serialized or "S-1-5-21-PLACEHOLDER" in serialized:
+                raise ValueError("normalized alert contains placeholder values")
+        return alert_metadata, alert_details
+
+    try:
+        alert_metadata, alert_details = _load_alert_files()
+    except (FileNotFoundError, ValueError) as e:
+        print(f"  - Alert files missing/invalid: {e}")
+        print("  - Running normalization...")
         try:
             from Intake_Alert import Normalize  # noqa: F401
-        except Exception as e:
-            print(f"  - Normalization failed: {e}")
-            return {"error": str(e)}
+        except Exception as norm_error:
+            print(f"  - Normalization failed: {norm_error}")
+            return {"error": str(norm_error)}
+        try:
+            alert_metadata, alert_details = _load_alert_files()
+        except Exception as reload_error:
+            print(f"  ERROR Error loading alert after normalization: {reload_error}")
+            return {"error": str(reload_error)}
     try:
-        with open(alert_path, "r") as f:
-            alert_metadata = json.load(f)
-        with open(alert_details_path, "r") as f:
-            alert_details = json.load(f)
         _audit_log(
             output_dir,
             "alert_loaded",
@@ -126,6 +238,7 @@ def run_investigation(
     # 2. Initialize Log Corpus
     print("\n[2/5] Initializing log corpus...")
     try:
+        _ensure_log_corpus(logs_path, output_dir)
         corpus = LogCorpus(logs_path)
         corpus_info = corpus.stats()
         print(f"  OK Loaded {corpus_info['total_logs']:,} logs")
@@ -375,6 +488,22 @@ def derive_keywords(min_keywords: int = MAX_INITIAL_KEYWORDS) -> list[str]:
         if c and c not in keywords:
             keywords.append(c)
 
+    must_keep: list[str] = []
+    def add_must(value):
+        if value is None:
+            return
+        text = str(value)
+        if text and text not in must_keep:
+            must_keep.append(text)
+
+    add_must(alert_metadata.get("file.path"))
+    add_must(alert_metadata.get("file.name"))
+    add_must(alert_metadata.get("event.code"))
+    add_must(alert_metadata.get("host.name"))
+    add_must(alert_metadata.get("winlog.user.name") or alert_metadata.get("user.id"))
+
+    keywords = must_keep + [k for k in keywords if k not in must_keep]
+
     if len(keywords) < MAX_INITIAL_KEYWORDS:
         raise ValueError(
             f"Unable to derive {MAX_INITIAL_KEYWORDS} keywords from alert context. "
@@ -483,10 +612,106 @@ def run_worker_stage(
     Ask sub-LLM to write code that filters logs, then execute it in the REPL.
     Returns summary only (no raw logs).
     """
+    if not isinstance(chunk_ids, list):
+        chunk_ids = []
+    chunk_ids = [str(cid) for cid in chunk_ids if cid is not None]
+    if not chunk_ids:
+        return {
+            "filtered_log_count": 0,
+            "log_references": [],
+            "worker_summary": "No chunk IDs available for worker stage.",
+            "additional_keywords": [],
+        }
     chunk_metadata = get_chunk_metadata(chunk_ids)
+
+    def _build_candidate_logs() -> tuple[list[dict], str]:
+        keyword_lower = [str(k).lower() for k in keywords if k]
+        alert_host = str(alert_metadata.get("host.name") or "").lower()
+        alert_user = str(alert_metadata.get("winlog.user.name") or alert_metadata.get("user.id") or "").lower()
+        alert_event_code = str(alert_metadata.get("event.code") or "").lower()
+        alert_pid = str(alert_metadata.get("process.pid") or alert_metadata.get("winlog.process.pid") or "").lower()
+        alert_file_path = str(alert_metadata.get("file.path") or "").lower()
+        alert_file_name = str(alert_metadata.get("file.name") or "").lower()
+
+        candidates: list[dict] = []
+        sampled: list[dict] = []
+        for chunk_id in chunk_ids:
+            chunk = get_chunk(chunk_id)
+            if not chunk:
+                continue
+            logs = chunk.get("normalized_logs") or chunk.get("raw_logs") or []
+            per_chunk = 0
+            sample_count = 0
+            for idx, log in enumerate(logs):
+                if max_total_logs and len(candidates) >= max_total_logs:
+                    break
+                if max_logs_per_chunk and per_chunk >= max_logs_per_chunk:
+                    break
+
+                if sample_count < 3 and log is not None:
+                    sampled.append({"chunk_id": chunk_id, "log_index": idx, "log": log})
+                    sample_count += 1
+
+                values = [str(v).lower() for v in log.values() if v is not None]
+                text = " ".join(values)
+
+                match = False
+                if any(k in text for k in keyword_lower):
+                    match = True
+                if not match and alert_event_code and alert_event_code in text:
+                    match = True
+                if not match and alert_host and alert_host in text:
+                    match = True
+                if not match and alert_user and alert_user in text:
+                    match = True
+                if not match and alert_pid and alert_pid in text:
+                    match = True
+                if not match and alert_file_path and alert_file_path in text:
+                    match = True
+                if not match and alert_file_name and alert_file_name in text:
+                    match = True
+
+                if match:
+                    candidates.append({"chunk_id": chunk_id, "log_index": idx, "log": log})
+                    per_chunk += 1
+
+        if candidates:
+            return candidates, "Candidate logs built from keyword + alert-field matches."
+
+        # Last resort: include script-block or command line logs in the chunks
+        for chunk_id in chunk_ids:
+            chunk = get_chunk(chunk_id)
+            if not chunk:
+                continue
+            logs = chunk.get("normalized_logs") or chunk.get("raw_logs") or []
+            per_chunk = 0
+            for idx, log in enumerate(logs):
+                if max_total_logs and len(candidates) >= max_total_logs:
+                    break
+                if max_logs_per_chunk and per_chunk >= max_logs_per_chunk:
+                    break
+                script_block = str(log.get("Script_Block") or "")
+                command_line = str(log.get("Command_Line") or "")
+                message = str(log.get("Message") or "")
+                if script_block or command_line or message:
+                    candidates.append({"chunk_id": chunk_id, "log_index": idx, "log": log})
+                    per_chunk += 1
+        if candidates:
+            return candidates, "Candidate logs built from script_block/command_line/message presence."
+
+        if sampled:
+            return sampled[:max_total_logs], "Candidate logs built from chunk samples (no direct matches)."
+
+        return [], "No candidate logs found."
+
+    candidate_logs, candidate_summary = _build_candidate_logs()
     _audit_log(
         "worker_stage_start",
-        {"chunk_count": len(chunk_ids), "keyword_count": len(keywords)},
+        {
+            "chunk_count": len(chunk_ids),
+            "keyword_count": len(keywords),
+            "candidate_logs": len(candidate_logs),
+        },
     )
 
     prompt = WORKER_CODE_PROMPT.format(
@@ -506,11 +731,15 @@ def run_worker_stage(
         {"response_len": len(worker_response)},
     )
     code = extract_code_block(worker_response)
+    # Normalize JSON literals to valid Python syntax (LLMs sometimes emit JSON in code blocks)
+    code = re.sub(r"\\bnull\\b", "None", code)
+    code = re.sub(r"\\btrue\\b", "True", code)
+    code = re.sub(r"\\bfalse\\b", "False", code)
 
     preamble_parts = [
-        f"keywords = {json.dumps(keywords)}",
-        f"target_chunk_ids = {json.dumps(chunk_ids)}",
-        f"chunk_metadata = {json.dumps(chunk_metadata)}",
+        f"keywords = {repr(keywords)}",
+        f"target_chunk_ids = {repr(chunk_ids)}",
+        f"chunk_metadata = {repr(chunk_metadata)}",
         f"max_total_logs = {max_total_logs}",
         f"max_logs_per_chunk = {max_logs_per_chunk}",
     ]
@@ -523,10 +752,12 @@ def run_worker_stage(
     log_references = []
     worker_summary = ""
     additional_keywords = []
+    used_candidate = False
 
     exec_globals = {
         "__builtins__": _builtins.__dict__.copy(),
         "__name__": "__worker_exec__",
+        "corpus": corpus,
         "get_chunk": get_chunk,
         "filter_logs": filter_logs,
         "summarize_logs": summarize_logs,
@@ -535,6 +766,7 @@ def run_worker_stage(
         "keywords": keywords,
         "target_chunk_ids": chunk_ids,
         "chunk_metadata": chunk_metadata,
+        "candidate_logs": candidate_logs,
         "max_total_logs": max_total_logs,
         "max_logs_per_chunk": max_logs_per_chunk,
         "json": json,
@@ -566,7 +798,25 @@ def run_worker_stage(
     if not isinstance(filtered_logs, list):
         raise ValueError("filtered_logs must be a list.")
 
-    if worker_failed or len(filtered_logs) == 0:
+    if not worker_failed and len(filtered_logs) == 0 and candidate_logs:
+        filtered_logs = candidate_logs
+        log_references = [f"{e['chunk_id']}:{e['log_index']}" for e in candidate_logs]
+        worker_summary = (
+            worker_summary
+            + " Worker returned no logs; using candidate_logs from REPL prefilter."
+        ).strip()
+        used_candidate = True
+
+    if worker_failed and candidate_logs:
+        filtered_logs = candidate_logs
+        log_references = [f"{e['chunk_id']}:{e['log_index']}" for e in candidate_logs]
+        worker_summary = (
+            worker_summary
+            + " Worker exec failed; using candidate_logs from REPL prefilter."
+        ).strip()
+        used_candidate = True
+
+    if (worker_failed and not used_candidate) or len(filtered_logs) == 0:
         fallback = _fallback_filter_logs(chunk_ids, keywords, max_total_logs, max_logs_per_chunk)
         filtered_logs = fallback["filtered_logs"]
         log_references = fallback["log_references"]
@@ -588,7 +838,7 @@ def run_worker_stage(
     return {
         "filtered_log_count": len(filtered_logs),
         "log_references": log_references,
-        "worker_summary": worker_summary,
+        "worker_summary": (worker_summary or candidate_summary),
         "additional_keywords": additional_keywords,
     }
 
@@ -633,9 +883,44 @@ def _fallback_filter_logs(
     """
     Deterministic fallback: scan chunks for keyword matches and correlate within chunk.
     """
+    alert_host = str(alert_metadata.get("host.name") or "").lower()
+    alert_user = str(alert_metadata.get("winlog.user.name") or alert_metadata.get("user.id") or "").lower()
+    alert_event_code = str(alert_metadata.get("event.code") or "").lower()
+    alert_pid = str(alert_metadata.get("process.pid") or alert_metadata.get("winlog.process.pid") or "").lower()
+    alert_file_path = str(alert_metadata.get("file.path") or "").lower()
+    alert_file_name = str(alert_metadata.get("file.name") or "").lower()
+
     keyword_lower = [str(k).lower() for k in keywords if k]
     filtered_logs: list[dict] = []
     log_references: list[str] = []
+    used_field_match = False
+
+    def _safe_text(value) -> str:
+        if value is None:
+            return ""
+        return str(value).lower()
+
+    def _matches_alert_fields(log: dict) -> bool:
+        if alert_event_code and _safe_text(log.get("Event_Code")) == alert_event_code:
+            return True
+        if alert_host and _safe_text(log.get("Host")) == alert_host:
+            return True
+        if alert_user and _safe_text(log.get("User")) == alert_user:
+            return True
+        if alert_pid and _safe_text(log.get("PID")) == alert_pid:
+            return True
+        if alert_file_path and alert_file_path in _safe_text(log.get("File_Path")):
+            return True
+        if alert_file_name:
+            if alert_file_name in _safe_text(log.get("File_Path")):
+                return True
+            if alert_file_name in _safe_text(log.get("Command_Line")):
+                return True
+            if alert_file_name in _safe_text(log.get("Message")):
+                return True
+            if alert_file_name in _safe_text(log.get("Script_Block")):
+                return True
+        return False
 
     for chunk_id in chunk_ids:
         chunk = get_chunk(chunk_id)
@@ -657,6 +942,13 @@ def _fallback_filter_logs(
                     if any(k in text for k in keyword_lower):
                         matched_indices.add(idx)
                         break
+
+        if not matched_indices:
+            for idx, log in enumerate(logs):
+                if _matches_alert_fields(log):
+                    matched_indices.add(idx)
+            if matched_indices:
+                used_field_match = True
 
         correlated_indices = set(matched_indices)
         if matched_indices:
@@ -688,11 +980,12 @@ def _fallback_filter_logs(
         if max_logs_per_chunk and len(filtered_logs) >= max_total_logs:
             break
 
-    summary = (
-        "Fallback filter used: keyword and correlation scan across matched chunks."
-        if filtered_logs
-        else "Fallback filter used but no logs matched keywords."
-    )
+    if not filtered_logs:
+        summary = "Fallback filter used but no logs matched keywords or alert fields."
+    elif used_field_match:
+        summary = "Fallback filter used: alert field match (host/user/event_code/file) plus correlation."
+    else:
+        summary = "Fallback filter used: keyword and correlation scan across matched chunks."
     return {
         "filtered_logs": filtered_logs,
         "log_references": log_references,
@@ -729,6 +1022,13 @@ def run_ioc_stage(task_description: str, keywords: list[str], max_logs: int | No
         "ioc_stage_start",
         {"log_count": len(logs), "keyword_count": len(keywords)},
     )
+
+    if not logs:
+        return {
+            "summary": "No filtered logs available for IOC extraction.",
+            "iocs": [],
+            "additional_keywords": [],
+        }
 
     if max_logs is None:
         max_logs = int(os.getenv("RLM_IOC_MAX_LOGS", "60"))
@@ -771,6 +1071,28 @@ def run_ioc_stage(task_description: str, keywords: list[str], max_logs: int | No
         result = json.loads(response[start : end + 1])
         if "summary" not in result:
             result["summary"] = ""
+        iocs = result.get("iocs", [])
+        if isinstance(iocs, list):
+            cleaned = []
+            for ioc in iocs:
+                if not isinstance(ioc, dict):
+                    continue
+                refs = ioc.get("references", [])
+                if isinstance(refs, list):
+                    refs = [
+                        r
+                        for r in refs
+                        if isinstance(r, str)
+                        and ":" in r
+                        and not r.startswith("ALERT_METADATA")
+                    ]
+                else:
+                    refs = []
+                if not refs:
+                    continue
+                ioc["references"] = refs
+                cleaned.append(ioc)
+            result["iocs"] = cleaned
         additional_keywords = result.get("additional_keywords", [])
         if isinstance(additional_keywords, list):
             if pivot_cycles_used >= MAX_PIVOT_CYCLES:
@@ -905,7 +1227,7 @@ def format_report(
 
     try:
         if fast_mode:
-            result_response = run_fast_pipeline(rlm, alert_details, alert_metadata)
+            result_response = run_fast_pipeline(rlm, alert_details, alert_metadata, setup_code)
             result_iterations = None
         else:
             # Pass a simple start message as the prompt
@@ -949,9 +1271,17 @@ def format_report(
         print(f"\nERROR Investigation failed: {e}")
         _audit_log(output_dir, "investigation_error", {"error": str(e)})
         return {"success": False, "error": str(e)}
+    finally:
+        if os.getenv("RLM_PURGE_AFTER_RUN", "1") == "1":
+            _purge_run_artifacts(logs_path, output_dir)
 
 
-def run_fast_pipeline(rlm: RLM, alert_details: dict, alert_metadata: dict) -> str:
+def run_fast_pipeline(
+    rlm: RLM,
+    alert_details: dict,
+    alert_metadata: dict,
+    setup_code: str | None = None,
+) -> str:
     task_description = (
         f"Evidence harvesting for alert: {alert_details.get('rule_name', 'Unknown')}"
     )
@@ -1013,6 +1343,15 @@ final_report = format_report(
 """
 
     with rlm._spawn_completion_context("fast_pipeline") as (_, environment):
+        if setup_code:
+            probe = environment.execute_code("probe_ok = callable(derive_keywords)")
+            if probe.stderr and "NameError" in probe.stderr:
+                _audit_log(
+                    os.getenv("RLM_AUDIT_DIR", "."),
+                    "setup_code_rerun",
+                    {"reason": "derive_keywords missing"},
+                )
+                environment.execute_code(setup_code)
         result = environment.execute_code(fast_code)
         if result.stderr:
             _audit_log(

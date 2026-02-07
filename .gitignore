@@ -224,3 +224,5 @@ Intake_Alert/raw_alert.json
 Intake_Alert/normalized_alert.json
 Intake_Alert/alert_details.json
 .rlm_tmp/
+audit_log.jsonl
+audit_report.txt

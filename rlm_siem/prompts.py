@@ -88,6 +88,7 @@ You are writing Python code that will run inside a REPL that already has:
 - corpus (LogCorpus)
 - get_chunk(chunk_id)
 - filter_logs(corpus, **conditions)
+- candidate_logs (list of dicts with chunk_id/log_index/log; prefiltered in REPL)
 - alert_metadata (dict)
 - alert_details (dict)
 - keywords (list[str])
@@ -96,8 +97,10 @@ You are writing Python code that will run inside a REPL that already has:
 - max_total_logs (int)
 - max_logs_per_chunk (int)
 
-Your job: generate code to filter logs to ONLY those relevant to the alert and keywords. Include related logs that share the same
-User, Host, Process_Name, Parent_Process, or Command_Line with matched logs. Discard clearly unrelated logs.
+Your job: generate code to filter logs to ONLY those relevant to the alert and keywords.
+Start from candidate_logs (already prefiltered) and tighten/expand using shared pivots (User, Host, Process_Name,
+Parent_Process, Command_Line, Event_Code, File_Path, Script_Block). If no further refinement is possible,
+return candidate_logs as filtered_logs (do NOT return an empty list if candidate_logs is non-empty).
 
 REQUIRED OUTPUT VARIABLES:
 - filtered_logs: list of dicts with keys {{"chunk_id": str, "log_index": int, "log": dict}}

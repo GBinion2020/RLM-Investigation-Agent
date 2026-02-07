@@ -7,7 +7,9 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from Intake_Alert.Intake_Elastic_logs import Elastic
+from dotenv import load_dotenv
 import json
+from datetime import datetime, timezone
 
 def get_field(data, path):
     """
@@ -28,11 +30,98 @@ def get_field(data, path):
     return temp
 
 raw_alert_path = "./Intake_Alert/raw_alert.json"
-if os.path.exists(raw_alert_path):
-    with open(raw_alert_path, "r") as f:
-        raw_alert = json.load(f)
-else:
-    raw_alert = Elastic.Alert()
+ALLOW_PLACEHOLDER_ALERT = os.getenv("RLM_ALLOW_PLACEHOLDER_ALERT", "0") == "1"
+
+
+def _placeholder_raw_alert() -> dict:
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return {
+        "@timestamp": now,
+        "event": {"code": "4104", "provider": "Microsoft-Windows-PowerShell", "category": "process"},
+        "host": {"name": "PLACEHOLDER_HOST", "ip": [], "mac": [], "os": {"platform": "windows"}},
+        "user": {"id": "S-1-5-21-PLACEHOLDER", "name": "placeholder"},
+        "winlog": {
+            "user": {"name": "placeholder", "type": "User"},
+            "channel": "Microsoft-Windows-PowerShell/Operational",
+            "task": "Execute a Remote Command",
+            "process": {"pid": 9999, "thread": {"id": 1}},
+        },
+        "file": {"path": "C:\\\\Placeholder\\\\sample.ps1", "name": "sample.ps1", "extension": "ps1"},
+        "message": "Placeholder alert message for offline testing.",
+        "kibana": {
+            "alert": {
+                "reason": "Placeholder alert (offline).",
+                "rule": {
+                    "name": "Placeholder Alert",
+                    "description": "Offline placeholder alert for RLM testing.",
+                    "severity": "low",
+                    "risk_score": 0,
+                    "rule_id": "PLACEHOLDER_RULE",
+                    "tags": ["placeholder"],
+                    "parameters": {"query": None},
+                    "references": [],
+                },
+                "original_event": {"code": "4104"},
+                "query": None,
+            }
+        },
+    }
+
+
+def _load_raw_alert(path: str) -> dict | None:
+    if not os.path.exists(path):
+        return None
+    if os.path.getsize(path) == 0:
+        return None
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or not data:
+        return None
+    if not ALLOW_PLACEHOLDER_ALERT and _is_placeholder_alert(data):
+        return None
+    return data
+
+
+def _is_placeholder_alert(data: dict) -> bool:
+    placeholder_markers = {
+        "PLACEHOLDER_HOST",
+        "PLACEHOLDER_RULE",
+        "S-1-5-21-PLACEHOLDER",
+        "placeholder",
+    }
+    for value in placeholder_markers:
+        if value in json.dumps(data):
+            return True
+    return False
+
+
+load_dotenv()
+raw_alert = _load_raw_alert(raw_alert_path)
+if raw_alert is None:
+    try:
+        elastic_host = os.getenv("ELASTIC_HOST")
+        elastic_api_key = os.getenv("ELASTIC_API_KEY")
+        if not elastic_host or not elastic_api_key:
+            raise ValueError(
+                "Elastic configuration missing. Set ELASTIC_HOST and ELASTIC_API_KEY in .env."
+            )
+        raw_alert = Elastic.Alert()
+    except Exception as exc:
+        if not ALLOW_PLACEHOLDER_ALERT:
+            raise ValueError(
+                f"Unable to load raw alert JSON or fetch from Elastic. Root error: {exc}. "
+                "Provide a valid ./Intake_Alert/raw_alert.json or configure Elastic."
+            ) from exc
+        raw_alert = _placeholder_raw_alert()
+
+    if not isinstance(raw_alert, dict) or not raw_alert:
+        if not ALLOW_PLACEHOLDER_ALERT:
+            raise ValueError("Elastic returned an empty alert payload.")
+        raw_alert = _placeholder_raw_alert()
+
     with open(raw_alert_path, "w") as f:
         json.dump(raw_alert, f, indent=4)
 

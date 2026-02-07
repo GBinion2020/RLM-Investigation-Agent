@@ -42,17 +42,25 @@ class LogCorpus:
         if not os.path.exists(self.source):
             raise FileNotFoundError(f"Log source not found: {self.source}")
             
-        with open(self.source, "r", encoding="utf-8") as f:
+        with open(self.source, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
             
         # Handle both flat log list and chunked format
         if isinstance(data, list):
-            if len(data) > 0 and "raw_logs" in data[0]:
+            is_chunked = False
+            if data:
+                first = data[0]
+                if isinstance(first, dict) and (
+                    "chunk_id" in first
+                    and ("normalized_logs" in first or "raw_logs" in first)
+                ):
+                    is_chunked = True
+
+            if is_chunked:
                 # Chunked format (from chunk_logs.py) with normalization support
                 self._chunks = data
                 self._logs = []
                 for chunk in data:
-                    # Normalize logs in chunk if not already normalized or if we want to ensure schema
                     raw_logs = chunk.get("normalized_logs") or chunk.get("raw_logs", [])
                     normalized_logs = [LogNormalizer.normalize(log) for log in raw_logs]
                     chunk["normalized_logs"] = normalized_logs
@@ -68,9 +76,12 @@ class LogCorpus:
         index_path = self.source.replace("log_chunks.json", "inverted_index.json")
         self.inverted_index = {}
         if os.path.exists(index_path):
-            with open(index_path, "r", encoding="utf-8") as f:
+            with open(index_path, "r", encoding="utf-8-sig") as f:
                 self.inverted_index = json.load(f)
             print(f"[LogCorpus] Loaded Inverted Index from {index_path} ({len(self.inverted_index)} keywords)")
+            if not self.inverted_index:
+                print("[LogCorpus] Inverted index empty. Building in-memory index...")
+                self._build_index()
         else:
              print(f"[LogCorpus] Warning: Inverted Index not found. Building in-memory index...")
              self._build_index()
@@ -351,7 +362,13 @@ class LogCorpus:
             Dict with corpus statistics
         """
         if not self._logs:
-            return {"total_logs": 0}
+            return {
+                "total_logs": 0,
+                "total_chunks": len(self._chunks),
+                "time_range": {"start": None, "end": None},
+                "unique_users": [],
+                "unique_event_codes": [],
+            }
             
         timestamps = [l.get("Timestamp") for l in self._logs if l.get("Timestamp")]
         users = set(l.get("User") for l in self._logs if l.get("User"))
