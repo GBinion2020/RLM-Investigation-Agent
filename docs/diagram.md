@@ -27,7 +27,7 @@ flowchart TD
         M --> N["Root RLM orchestration"]
     end
 
-    subgraph LMHandler["LM Handler (Sub-LLMs)"]
+    subgraph LMHandler["LM Handler (sub-LLMs)"]
         N --> O["run_worker_stage() -> llm_query()"]
         N --> P["run_ioc_stage() -> llm_query()"]
     end

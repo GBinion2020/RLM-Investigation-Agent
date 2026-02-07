@@ -1,9 +1,12 @@
 ﻿# RLM Investigation Agent
 
-RLM Investigation Agent is a security-evidence harvesting pipeline built on Recursive Language Models (RLM). It ingests an alert, normalizes it, searches a local log corpus for related evidence using an RLM worflow (Sub LLM calls), and produces a structured report with IOCs and log references. The system is designed for evidence collection only and does not label alerts as benign or malicious.
+RLM Investigation Agent is a security-evidence harvesting pipeline built on Recursive Language Models (RLM). It ingests an alert, normalizes it, searches a local log corpus for related evidence using an RLM workflow (sub-LLM calls), and produces a structured report with IOCs and log references. The system is designed for evidence collection only and does not label alerts as benign or malicious.
+
+## Acknowledgements
+This project is inspired by the Recursive Language Models (RLM) work by Alex Zhang and the MIT team. Their research and open materials made this implementation possible and shaped the design choices throughout this repo. citeturn0search0
 
 ## Why This Exists
-This project is a practical exploration of **Recursive Language Models (RLMs)** as a way to achieve an *effectively infinite context window* without stuffing all logs into a single model call. RLMs are an inference strategy where a root model operates inside a REPL environment that holds large context variables and can recursively call sub‑LMs to inspect subsets of that context. This avoids “context rot” by letting the model decide how to partition and query the data, while keeping the root model’s input small and focused. citeturn0search0
+This project is a practical exploration of **Recursive Language Models (RLMs)** as a way to achieve an *effectively infinite context window* without stuffing all logs into a single model call. RLMs are an inference strategy where a root model operates inside a REPL environment that holds large context variables and can recursively call sub‑LLMs to inspect subsets of that context. This avoids “context rot” by letting the model decide how to partition and query the data, while keeping the root model’s input small and focused. citeturn0search0
 
 In this SIEM setting, that means the root RLM never needs the full log corpus in its prompt. It can derive keywords, find chunk IDs, and delegate focused log filtering/IOC extraction to sub‑LLMs operating over bounded slices of the data. citeturn0search0
 
