@@ -219,7 +219,6 @@ visualizer/node_modules/
 visualizer/.next/
 
 # RLM-SIEM generated outputs (sensitive)
-get_siem_context/
 Intake_Alert/raw_alert.json
 Intake_Alert/normalized_alert.json
 Intake_Alert/alert_details.json
