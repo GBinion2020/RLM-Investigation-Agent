@@ -3,14 +3,18 @@
 RLM Investigation Agent is a security-evidence harvesting pipeline built on Recursive Language Models (RLM). It ingests an alert, normalizes it, searches a local log corpus for related evidence using an RLM worflow (Sub LLM calls), and produces a structured report with IOCs and log references. The system is designed for evidence collection only and does not label alerts as benign or malicious.
 
 ## Why This Exists
-Security triage requires fast, audit-friendly evidence gathering. This project automates:
+This project is a practical exploration of **Recursive Language Models (RLMs)** as a way to achieve an *effectively infinite context window* without stuffing all logs into a single model call. RLMs are an inference strategy where a root model operates inside a REPL environment that holds large context variables and can recursively call sub‑LMs to inspect subsets of that context. This avoids “context rot” by letting the model decide how to partition and query the data, while keeping the root model’s input small and focused. citeturn0search0
+
+In this SIEM setting, that means the root RLM never needs the full log corpus in its prompt. It can derive keywords, find chunk IDs, and delegate focused log filtering/IOC extraction to sub‑LLMs operating over bounded slices of the data. citeturn0search0
+
+In practice, this project automates:
 - Normalizing alert context into a consistent schema
 - Locating relevant log chunks without exposing raw logs to the root model
-- Delegating log filtering and IOC extraction to sub-LLMs with strict instructions
-- Emitting a deterministic, templated report plus a relevant-log bundle
+- Delegating log filtering and IOC extraction to sub‑LLMs with strict instructions
+- Emitting a deterministic, templated report plus a relevant‑log bundle
 
 ## Simple Workflow (Conceptual)
-![Simple Workflow Diagram](docs/rlmdg.png)
+![Simple Workflow Diagram](docs/rlm22.png)
 
 ## Pipeline Workflow (Detailed Data + Control Flow)
 ```mermaid
