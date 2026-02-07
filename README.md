@@ -157,9 +157,11 @@ These are ignored by default in `.gitignore` because they can contain sensitive 
 - `get_siem_context/rlm_logs/*.jsonl`
 
 ## Docs
-- `Docs/engineering_report.md`
-- `Docs/prompts.md`
-- `Docs/diagram.md`
+The following documents contain deeper technical details and internal prompt text. They are intended for maintainers and auditors, not end users.
+
+- `Docs/engineering_report.md` — research-grade architecture and implementation report.
+- `Docs/prompts.md` — full prompt text used by the RLM pipeline (sensitive by nature; review before sharing).
+- `Docs/diagram.md` — detailed Mermaid diagrams used in this README.
 
 ## Troubleshooting
 Common issues:
