@@ -140,8 +140,5 @@ These settings trade breadth for predictable runtime, enabling iterative debuggi
 - Evaluate performance on multiple alert categories and datasets.
 - Explore deeper recursion depth or specialized sub-LLM models.
 
-## Reproducibility Notes
-This report was produced by reviewing the repository end-to-end and inspecting the core pipeline code paths. The pipeline was not re-run during this documentation pass because logs and alert artifacts were intentionally scrubbed. The design and implementation details above are derived from the current codebase and configuration.
-
 ## References
 - Alex Zhang, MIT team. "Recursive Language Models" blog post, 2025. citeturn0search0
